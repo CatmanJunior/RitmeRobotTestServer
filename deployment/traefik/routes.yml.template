@@ -1,0 +1,36 @@
+http:
+  routers:
+    login:
+      rule: "Host(`__TEST_DOMAIN__`) && (Path(`/api/auth/login`) || Path(`/api/auth/verify`))"
+      entryPoints: [websecure]
+      priority: 1000
+      middlewares: [api-no-store]
+      service: frontend
+      tls: {certResolver: letsencrypt}
+    api:
+      rule: "Host(`__TEST_DOMAIN__`) && (Path(`/api`) || PathPrefix(`/api/`))"
+      entryPoints: [websecure]
+      priority: 100
+      middlewares: [api-no-store]
+      service: backend
+      tls: {certResolver: letsencrypt}
+    frontend:
+      rule: "Host(`__TEST_DOMAIN__`)"
+      entryPoints: [websecure]
+      priority: 1
+      service: frontend
+      tls: {certResolver: letsencrypt}
+  middlewares:
+    api-no-store:
+      headers:
+        customResponseHeaders:
+          Cache-Control: "no-store"
+  services:
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:8080"
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://backend:8000"

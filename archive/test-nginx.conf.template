@@ -1,0 +1,79 @@
+# Installed in /etc/nginx/sites-available; Ubuntu includes this in its http context.
+map "$status:$uri" $ritmerobot_test_cache {
+    default "no-store";
+    ~^(200|206|304):/api/ "no-store";
+    ~^(200|206|304): "no-cache";
+}
+
+# Let a fresh login replace an expired cookie instead of failing in backend middleware.
+map $uri $ritmerobot_test_cookie {
+    default $http_cookie;
+    ~^/api/auth/(login|verify)$ "";
+}
+
+map $uri $ritmerobot_test_worker_scope {
+    default "";
+    /legacy-service-worker.js "/";
+}
+
+server {
+    listen 80;
+    server_name __TEST_DOMAIN__;
+
+    add_header Cross-Origin-Opener-Policy same-origin always;
+    add_header Cross-Origin-Embedder-Policy require-corp always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Cache-Control $ritmerobot_test_cache always;
+    add_header Service-Worker-Allowed $ritmerobot_test_worker_scope always;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Cookie $ritmerobot_test_cookie;
+    proxy_cookie_flags access_token secure httponly;
+    proxy_hide_header Cache-Control;
+
+    location ^~ /api/ {
+        proxy_pass http://127.0.0.1:18081;
+    }
+
+    # Only an internal subrequest can use this authorization endpoint.
+    location = /_ritmerobot_license_check {
+        internal;
+        proxy_pass http://127.0.0.1:18081/api/auth/validate;
+        proxy_method GET;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_intercept_errors on;
+        error_page 400 = @ritmerobot_test_denied;
+    }
+    location @ritmerobot_test_denied { return 401; }
+
+    # Gate this project's WASM, PCK and Godot engine/worklet scripts. Login JS/CSS/icons stay public.
+    location ~ ^/play/(?:[^/]+\.(?:wasm|pck)|ritme_robot(?:\.[^/]+)*\.js)$ {
+        auth_request /_ritmerobot_license_check;
+        proxy_pass http://127.0.0.1:18080;
+    }
+
+    location = /admin { return 308 /admin/; }
+    location ~ ^/admin(?:/[^/.]+)*/?$ {
+        rewrite ^ /admin/index.html break;
+        proxy_pass http://127.0.0.1:18080;
+    }
+
+    location = /play { return 302 /; }
+    location = /play/ { return 302 /; }
+    # Keep this route while older installed PWAs may still request their service worker.
+    location ~ ^/(?:play/service-worker|godot/ritme_robot\.service\.worker|ritme_robot\.service\.worker)\.js$ {
+        rewrite ^ /legacy-service-worker.js break;
+        proxy_pass http://127.0.0.1:18080;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:18080;
+    }
+}

@@ -1,0 +1,24 @@
+# Local builds, exports, bundles and server state
+/.godot-export/
+/dist/
+/work/
+/data/
+/backend.env
+/deployment/frontend/dist/
+/deployment/backend.env
+/deployment/data/
+/deployment/traefik/routes.yml
+
+# Environment files, keys and databases must stay local.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.pfx
+*.p12
+*.db
+*.sqlite3
+*.tar.gz
+__pycache__/
+*.pyc

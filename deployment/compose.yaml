@@ -1,0 +1,50 @@
+name: ritmerobot-test
+
+services:
+  traefik:
+    image: traefik:v3.6
+    command:
+      - --providers.file.filename=/etc/traefik/routes.yml
+      - --providers.file.watch=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?Set ACME_EMAIL in .env}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - type: bind
+        source: ./traefik/routes.yml
+        target: /etc/traefik/routes.yml
+        read_only: true
+        bind:
+          create_host_path: false
+      - traefik-certificates:/letsencrypt
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_UPSTREAM: backend:8000
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: dockerfile
+    volumes:
+      - type: bind
+        source: ./backend.env
+        target: /app/.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - ./data:/app/data
+    restart: unless-stopped
+
+volumes:
+  traefik-certificates:
