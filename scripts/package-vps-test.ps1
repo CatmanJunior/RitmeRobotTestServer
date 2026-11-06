@@ -5,10 +5,26 @@ $taskFrontend = [System.IO.Path]::GetFullPath((Join-Path $taskServer '../ritmero
 $taskBackend = [System.IO.Path]::GetFullPath((Join-Path $taskServer '../../backend/ritmerobot-backend'))
 $taskTemplate = Join-Path $taskServer 'deployment'
 $taskDist = Join-Path $taskServer 'dist'
+$taskExportSetting = [Environment]::GetEnvironmentVariable('GODOT_EXPORT_DIR', 'Process')
+if (-not $taskExportSetting) {
+	$taskExport = Join-Path $taskServer '.godot-export'
+} elseif ([System.IO.Path]::IsPathRooted($taskExportSetting)) {
+	$taskExport = $taskExportSetting
+} else {
+	$taskExport = [System.IO.Path]::GetFullPath((Join-Path $taskFrontend $taskExportSetting))
+}
+$taskShellSetting = [Environment]::GetEnvironmentVariable('GODOT_SHELL_PATH', 'Process')
+if (-not $taskShellSetting) {
+	$taskShell = [System.IO.Path]::GetFullPath((Join-Path $taskServer '../../youbeatai-godot-web/web/player-shell.html'))
+} elseif ([System.IO.Path]::IsPathRooted($taskShellSetting)) {
+	$taskShell = $taskShellSetting
+} else {
+	$taskShell = [System.IO.Path]::GetFullPath((Join-Path $taskFrontend $taskShellSetting))
+}
 if (-not $SkipBuild) {
 	$taskPreviousExport = [Environment]::GetEnvironmentVariable('GODOT_EXPORT_DIR', 'Process')
 	$taskPreviousDist = [Environment]::GetEnvironmentVariable('FRONTEND_DIST_DIR', 'Process')
-	if (-not $taskPreviousExport) { $env:GODOT_EXPORT_DIR = Join-Path $taskServer '.godot-export' }
+	if (-not $taskPreviousExport) { $env:GODOT_EXPORT_DIR = $taskExport }
 	$env:FRONTEND_DIST_DIR = $taskDist
 	$taskPushed = $false
 	try {
@@ -31,8 +47,7 @@ $taskBundle = Join-Path $taskWork "vps-test-$taskStamp"
 if (Test-Path -LiteralPath $taskBundle) { throw "Bundle already exists: $taskBundle" }
 New-Item -ItemType Directory -Path $taskBundle | Out-Null
 $taskTemplateFiles = @(
-	'README.md', '.env.example', 'backend.dockerignore', 'compose.yaml',
-	'frontend/Dockerfile', 'frontend/nginx.conf', 'traefik/routes.yml.template',
+	'README.md', '.env.example', 'compose.yaml', 'traefik/routes.yml.template',
 	'scripts/configure-traefik.sh', 'scripts/generate-secrets.sh'
 )
 foreach ($taskRelative in $taskTemplateFiles) {
@@ -41,13 +56,29 @@ foreach ($taskRelative in $taskTemplateFiles) {
 	New-Item -ItemType Directory -Path (Split-Path -Parent $taskTarget) -Force | Out-Null
 	Copy-Item -LiteralPath $taskSource -Destination $taskTarget
 }
-$taskPublished = Join-Path $taskBundle 'frontend/dist'
-New-Item -ItemType Directory -Path $taskPublished -Force | Out-Null
-foreach ($taskName in @('index.html', 'manifest.webmanifest', 'service-worker.js', 'legacy-service-worker.js')) {
-	Copy-Item -LiteralPath (Join-Path $taskDist $taskName) -Destination $taskPublished
+
+# Bundle the frontend repository so Compose builds with its own Dockerfile and Nginx config.
+$taskFrontendTarget = Join-Path $taskBundle 'frontend'
+New-Item -ItemType Directory -Path $taskFrontendTarget | Out-Null
+$taskFrontendFiles = & git -C $taskFrontend -c core.quotepath=false ls-files
+if ($LASTEXITCODE -ne 0) { throw 'Could not list frontend source files.' }
+foreach ($taskRelative in $taskFrontendFiles) {
+	if ($taskRelative -match '(^|/)(\.env[^/]*|\.git|node_modules)(/|$)') { continue }
+	$taskSource = Join-Path $taskFrontend $taskRelative
+	if (-not (Test-Path -LiteralPath $taskSource -PathType Leaf)) { throw "Frontend source is missing: $taskRelative" }
+	$taskTarget = Join-Path $taskFrontendTarget $taskRelative
+	New-Item -ItemType Directory -Path (Split-Path -Parent $taskTarget) -Force | Out-Null
+	Copy-Item -LiteralPath $taskSource -Destination $taskTarget
 }
-Copy-Item -LiteralPath (Join-Path $taskDist 'admin') -Destination $taskPublished -Recurse
-Copy-Item -LiteralPath (Join-Path $taskDist 'play') -Destination $taskPublished -Recurse
+
+$taskGameTarget = Join-Path $taskBundle 'game-export'
+if (-not (Test-Path -LiteralPath $taskExport -PathType Container)) { throw "Godot export directory is missing: $taskExport" }
+New-Item -ItemType Directory -Path $taskGameTarget | Out-Null
+Get-ChildItem -LiteralPath $taskExport -Force | Copy-Item -Destination $taskGameTarget -Recurse -Force
+$taskShellTarget = Join-Path $taskBundle 'game-shell'
+if (-not (Test-Path -LiteralPath $taskShell -PathType Leaf)) { throw "Godot player shell is missing: $taskShell" }
+New-Item -ItemType Directory -Path $taskShellTarget | Out-Null
+Copy-Item -LiteralPath $taskShell -Destination (Join-Path $taskShellTarget 'player-shell.html')
 
 # Copy tracked backend source only; never copy its local environment, database, or keys.
 $taskBackendTarget = Join-Path $taskBundle 'backend'
@@ -63,12 +94,11 @@ foreach ($taskRelative in $taskBackendFiles) {
 	New-Item -ItemType Directory -Path (Split-Path -Parent $taskTarget) -Force | Out-Null
 	Copy-Item -LiteralPath $taskSource -Destination $taskTarget
 }
-Copy-Item -LiteralPath (Join-Path $taskBundle 'backend.dockerignore') -Destination (Join-Path $taskBackendTarget '.dockerignore')
 
 # Linux setup files must use LF even when Git checks them out with CRLF on Windows.
 $taskTextPaths = @((Join-Path $taskBundle 'compose.yaml'), (Join-Path $taskBundle '.env.example'),
-	(Join-Path $taskBundle 'frontend/Dockerfile'), (Join-Path $taskBundle 'frontend/nginx.conf'),
-	(Join-Path $taskBundle 'traefik/routes.yml.template')) +
+	(Join-Path $taskBundle 'frontend/dockerfile'), (Join-Path $taskBundle 'frontend/nginx.conf'),
+	(Join-Path $taskBundle 'backend/dockerfile'), (Join-Path $taskBundle 'traefik/routes.yml.template')) +
 	@(Get-ChildItem -LiteralPath (Join-Path $taskBundle 'scripts') -Filter '*.sh' | Select-Object -ExpandProperty FullName)
 foreach ($taskTextPath in $taskTextPaths) {
 	$taskText = [System.IO.File]::ReadAllText($taskTextPath).Replace("`r`n", "`n")
@@ -79,4 +109,4 @@ $taskArchive = Join-Path $taskWork "ritmerobot-vps-test-$taskStamp.tar.gz"
 if ($LASTEXITCODE -ne 0) { throw 'Could not package the VPS test archive.' }
 Write-Output "Bundle directory: $taskBundle"
 Write-Output "Upload this archive: $taskArchive"
-Write-Output "Included release: $taskRelease. No local database, secrets, or certificates were copied."
+Write-Output "Validated release: $taskRelease. No local database, secrets, or certificates were copied."

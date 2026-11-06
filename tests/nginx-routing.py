@@ -15,7 +15,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIG = ROOT / "deployment/frontend/nginx.conf"
+CONFIG = ROOT.parent / "ritmerobot-frontend/nginx.conf"
 NGINX_BIN = os.environ.get("NGINX_BIN", "nginx")
 MIME_TYPES = os.environ.get("NGINX_MIME_TYPES", "/etc/nginx/mime.types")
 
@@ -57,7 +57,7 @@ class TestFrontendNginx(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         template = CONFIG.read_text(encoding="utf-8")
-        if "${BACKEND_UPSTREAM}" not in template or "listen 8080;" not in template:
+        if "${BACKEND_UPSTREAM}" not in template or "listen 5173;" not in template:
             raise AssertionError("Test frontend Nginx must use the container configuration template")
         if not shutil.which(NGINX_BIN):
             raise RuntimeError("Nginx is required; set NGINX_BIN to the executable")
@@ -93,7 +93,7 @@ class TestFrontendNginx(unittest.TestCase):
         cls.port = free_port()
 
         config = template.replace("${BACKEND_UPSTREAM}", f"127.0.0.1:{cls.backend.server_port}")
-        config = config.replace("listen 8080;", f"listen 127.0.0.1:{cls.port};")
+        config = config.replace("listen 5173;", f"listen 127.0.0.1:{cls.port};")
         config = config.replace("/usr/share/nginx/html", str(assets))
         temp_dirs = "\n".join(
             f"{name} {root / name};"

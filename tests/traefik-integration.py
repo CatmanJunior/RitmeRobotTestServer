@@ -13,6 +13,7 @@ import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
+FRONTEND_ROOT = ROOT.parent / "ritmerobot-frontend"
 DOMAIN = "ritmerobot-test.local"
 
 
@@ -48,8 +49,15 @@ class TraefikIntegrationTest(unittest.TestCase):
 
         context = root / "frontend"
         context.mkdir()
-        for name in ("Dockerfile", "nginx.conf"):
-            shutil.copy2(ROOT / "deployment/frontend" / name, context / name)
+        shutil.copy2(FRONTEND_ROOT / "nginx.conf", context / "nginx.conf")
+        (context / "dockerfile").write_text(
+            "FROM nginx:1.28-alpine\n"
+            "ENV NGINX_ENVSUBST_FILTER=\"^BACKEND_UPSTREAM$\"\n"
+            "COPY nginx.conf /etc/nginx/templates/default.conf.template\n"
+            "COPY dist/ /usr/share/nginx/html/\n"
+            "EXPOSE 5173\n",
+            encoding="utf-8",
+        )
         for name, contents in {
             "index.html": "PLAYER", "admin/index.html": "ADMIN",
             "play/ritme_robot.js": "ENGINE", "play/ritme_robot.wasm": "WASM",
@@ -165,15 +173,24 @@ class ComposeIntegrationTest(unittest.TestCase):
         project = "rrtest" + uuid.uuid4().hex[:10]
         with tempfile.TemporaryDirectory(prefix="ritmerobot-compose-test-") as temporary:
             root = Path(temporary)
-            for name in ("frontend/Dockerfile", "frontend/nginx.conf"):
-                target = root / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(ROOT / "deployment" / name, target)
+            frontend = root / "frontend"
+            frontend.mkdir()
+            shutil.copy2(FRONTEND_ROOT / "nginx.conf", frontend / "nginx.conf")
+            (frontend / "dockerfile").write_text(
+                "FROM nginx:1.28-alpine\n"
+                "ENV NGINX_ENVSUBST_FILTER=\"^BACKEND_UPSTREAM$\"\n"
+                "COPY nginx.conf /etc/nginx/templates/default.conf.template\n"
+                "COPY dist/ /usr/share/nginx/html/\n"
+                "EXPOSE 5173\n",
+                encoding="utf-8",
+            )
             for name, contents in {"index.html": "PLAYER", "admin/index.html": "ADMIN",
                                    "play/ritme_robot.wasm": "WASM"}.items():
-                target = root / "frontend/dist" / name
+                target = frontend / "dist" / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(contents, encoding="utf-8")
+            (root / "game-export").mkdir()
+            (root / "game-shell").mkdir()
 
             backend = root / "backend"
             backend.mkdir()

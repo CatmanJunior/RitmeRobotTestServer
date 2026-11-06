@@ -27,7 +27,12 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: dockerfile
+      additional_contexts:
+        game_export: ./game-export
+        game_shell: ./game-shell
     environment:
       BACKEND_UPSTREAM: backend:8000
     restart: unless-stopped

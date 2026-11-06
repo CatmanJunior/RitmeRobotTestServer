@@ -29,7 +29,7 @@ http:
     frontend:
       loadBalancer:
         servers:
-          - url: "http://frontend:8080"
+          - url: "http://frontend:5173"
     backend:
       loadBalancer:
         servers:

@@ -33,7 +33,7 @@ class TraefikConfigurationTest(unittest.TestCase):
         contents = self.output.read_text(encoding="utf-8")
         self.assertIn("Host(`test.example.com`)", contents)
         self.assertNotIn("__TEST_DOMAIN__", contents)
-        self.assertIn("http://frontend:8080", contents)
+        self.assertIn("http://frontend:5173", contents)
         self.assertIn("http://backend:8000", contents)
         self.assertIn("certResolver: letsencrypt", contents)
 

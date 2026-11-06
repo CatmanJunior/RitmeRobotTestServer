@@ -1,4 +1,4 @@
-"""Check that the test-server bundle uses its own output and excludes secrets."""
+"""Check sibling-repository packaging and secret exclusion."""
 
 from pathlib import Path
 import os
@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class TestBundle(unittest.TestCase):
     def test_local_deployment_secrets_and_data_are_ignored(self):
         for name in ("deployment/.env", "deployment/backend.env", "deployment/data/backup.json",
-                     "deployment/traefik/routes.yml", "deployment/frontend/dist/index.html"):
+                     "deployment/traefik/routes.yml", "dist/index.html"):
             with self.subTest(path=name):
                 result = subprocess.run(["git", "check-ignore", "--no-index", "--quiet", name], cwd=ROOT)
                 self.assertEqual(result.returncode, 0, f"{name} must stay out of Git")
@@ -33,15 +33,28 @@ class TestBundle(unittest.TestCase):
         shutil.copytree(ROOT / "deployment", server / "deployment")
         (server / "deployment/.env").write_text("local environment", encoding="utf-8")
         (server / "deployment/traefik/routes.yml").write_text("local routes", encoding="utf-8")
-        for name, contents in {
-            "index.html": "player", "manifest.webmanifest": "{}", "service-worker.js": "worker",
-            "legacy-service-worker.js": "old worker", "admin/index.html": "admin",
-            "play/build-version.txt": "0123456789abcdef0123", "play/game.pck": "game fixture",
-        }.items():
-            path = server / "dist" / name
+        (server / ".godot-export").mkdir(exist_ok=True)
+        (server / ".godot-export/game.wasm").write_text("game fixture", encoding="utf-8")
+        (server / "dist/play").mkdir(parents=True)
+        (server / "dist/play/build-version.txt").write_text("0123456789abcdef0123", encoding="utf-8")
+        shell = root / "youbeatai-godot-web" / "web"
+        shell.mkdir(parents=True)
+        (shell / "player-shell.html").write_text("player shell", encoding="utf-8")
+        frontend_files = {
+            "dockerfile": "FROM nginx:1.28-alpine\n",
+            "nginx.conf": "nginx fixture",
+            "package.json": "{}",
+            "package-lock.json": "{}",
+        }
+        for name, contents in frontend_files.items():
+            (frontend / name).write_text(contents, encoding="utf-8")
+        subprocess.run(["git", "init", "--quiet", str(frontend)], check=True)
+        subprocess.run(["git", "-C", str(frontend), "add", *frontend_files], check=True)
+        for name, contents in {"main.py": "fixture", "dockerfile": "FROM python:3.14-alpine\n"}.items():
+            path = backend / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
-        for name in ("main.py", "dockerfile", ".env", "data/private.sqlite3"):
+        for name in (".env", "data/private.sqlite3"):
             path = backend / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture", encoding="utf-8")
@@ -50,7 +63,7 @@ class TestBundle(unittest.TestCase):
                         "data/private.sqlite3"], check=True)
         return server, frontend
 
-    def test_bundle_uses_server_dist_and_excludes_backend_secrets(self):
+    def test_bundle_uses_repository_docker_files_and_excludes_secrets(self):
         with tempfile.TemporaryDirectory(prefix="ritmerobot-bundle-test-") as temporary:
             server, frontend = self.prepare_fixture(Path(temporary))
             result = subprocess.run(["pwsh", "-NoProfile", "-File", str(server / "scripts/package-vps-test.ps1"),
@@ -60,23 +73,28 @@ class TestBundle(unittest.TestCase):
             self.assertEqual(len(archives), 1)
             with tarfile.open(archives[0], "r:gz") as bundle:
                 names = {name.removeprefix("./") for name in bundle.getnames()}
-            self.assertIn("frontend/dist/play/game.pck", names)
+            self.assertIn("frontend/dockerfile", names)
             self.assertIn("frontend/nginx.conf", names)
             self.assertIn("traefik/routes.yml.template", names)
             self.assertIn(".env.example", names)
             self.assertIn("backend/main.py", names)
             self.assertIn("backend/dockerfile", names)
+            self.assertIn("game-export/game.wasm", names)
+            self.assertIn("game-shell/player-shell.html", names)
             self.assertNotIn("backend/.env", names)
             self.assertNotIn("backend/data/private.sqlite3", names)
             self.assertNotIn(".env", names)
             self.assertNotIn("traefik/routes.yml", names)
+            self.assertNotIn("frontend/dist/index.html", names)
+            self.assertNotIn("frontend/Dockerfile", names)
+            self.assertNotIn("deployment/frontend/nginx.conf", names)
             self.assertFalse((frontend / "dist").exists())
 
     def test_default_build_uses_server_export_and_output(self):
         with tempfile.TemporaryDirectory(prefix="ritmerobot-bundle-build-") as temporary:
             root = Path(temporary)
             server, frontend = self.prepare_fixture(root)
-            (server / ".godot-export").mkdir()
+            (server / ".godot-export").mkdir(exist_ok=True)
             bin_dir = root / "bin"
             bin_dir.mkdir()
             (bin_dir / "npm.cmd").write_text(

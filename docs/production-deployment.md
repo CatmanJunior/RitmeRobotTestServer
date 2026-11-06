@@ -29,22 +29,9 @@ In the frontend repository's `.env`, set:
 
 The frontend's root `docker-compose.yml` publishes port 5173 and does not configure the server's router. Configure the existing Traefik setup to forward the frontend hostname to that published port and to handle HTTPS. If Traefik runs in a container, use a host address or network connection it can actually reach. If frontend and backend run in separate Compose projects, make the backend reachable from the frontend container through an existing shared network or another private address. Publishing the frontend port makes it reachable according to the host firewall and network configuration.
 
-The **existing backend router** must match the same public hostname and `/api/`, route to the backend and take precedence over the frontend route. Do not strip the `/api` prefix. The frontend Nginx returns 404 for `/api/`, so accessing its published port directly does not provide the API.
+The **existing backend router** must match the same public hostname and `/api/`, route to the backend and take precedence over the frontend route. Do not strip the `/api` prefix. Route `/api/auth/login` and `/api/auth/verify` through the frontend so its Nginx can clear a stale request cookie and add `Secure` to the backend's `access_token` cookie; other `/api/` requests should go directly to the backend. The frontend Nginx returns 404 for other `/api/` paths, so accessing its published port directly does not provide the API.
 
-The previous host Nginx removed an expired session cookie on `/api/auth/login` and `/api/auth/verify` so a new login could replace it. Because Traefik now handles these requests, preserve that behavior in Traefik: configure a higher-priority router for those two exact paths with a headers middleware that removes the request `Cookie` header, and send it to the existing backend service. For example, adapt these Docker labels on the **backend** service to its actual hostname, Traefik service and entrypoint:
-
-```yaml
-labels:
-  traefik.http.routers.ritmerobot-auth.rule: "Host(`ritmerobot.example`) && (Path(`/api/auth/login`) || Path(`/api/auth/verify`))"
-  traefik.http.routers.ritmerobot-auth.entrypoints: websecure
-  traefik.http.routers.ritmerobot-auth.tls: "true"
-  traefik.http.routers.ritmerobot-auth.priority: "1000"
-  traefik.http.routers.ritmerobot-auth.service: YOUR_EXISTING_BACKEND_SERVICE
-  traefik.http.routers.ritmerobot-auth.middlewares: ritmerobot-clear-login-cookie
-  traefik.http.middlewares.ritmerobot-clear-login-cookie.headers.customrequestheaders.Cookie: ""
-```
-
-The auth router must outrank both the normal API router and the frontend router. Apply the cookie-removal middleware **only** to login and verify; session validation and other API requests need their cookies. The previous host proxy also added `Secure` and `HttpOnly` flags to the `access_token` cookie. The current backend sets `HttpOnly`, but its login and license responses do not set `Secure`; configure the backend or an appropriate Traefik-compatible response middleware to add `Secure` before production use. HTTPS termination alone does not add that flag.
+The frontend Nginx configuration proxies only login and license verification to the backend, clears the incoming `Cookie` header for those requests, and adds `Secure` and `HttpOnly` to the backend's `access_token` cookie. Configure Traefik with higher-priority routers for `/api/auth/login` and `/api/auth/verify` that send these paths to the frontend. The normal `/api/` router must continue to send all other API calls directly to the backend so cookies reach session validation.
 
 ## Build and start the frontend container
 

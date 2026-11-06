@@ -4,7 +4,6 @@
 /work/
 /data/
 /backend.env
-/deployment/frontend/dist/
 /deployment/backend.env
 /deployment/data/
 /deployment/traefik/routes.yml
